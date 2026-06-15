@@ -11,6 +11,9 @@ class AlertSystem:
     def _get_size_order(self) -> List[str]:
         return ["NB", "S", "M", "L", "XL", "XXL"]
 
+    def _is_valid_size(self, size: str) -> bool:
+        return size and size.upper() in self._get_size_order()
+
     def _get_next_size(self, current_size: str) -> Optional[str]:
         sizes = self._get_size_order()
         if current_size in sizes:
@@ -28,6 +31,16 @@ class AlertSystem:
         return None
 
     def analyze_weight_for_size(self, baby: Baby) -> Dict:
+        if not self._is_valid_size(baby.current_diaper_size):
+            return {
+                "current_size": baby.current_diaper_size,
+                "weight": baby.current_weight_kg,
+                "size_fit": "invalid",
+                "recommendation": "invalid_size",
+                "weight_range": None,
+                "error": f"无效的纸尿裤尺码，必须是以下之一: {', '.join(self._get_size_order())}"
+            }
+
         current_size_ref = self.db.query(DiaperSizeReference).filter(
             DiaperSizeReference.size == baby.current_diaper_size
         ).first()
@@ -124,11 +137,14 @@ class AlertSystem:
                 "analysis_period_days": days,
                 "data_points": 0,
                 "total_leaks": 0,
+                "leak_days": 0,
                 "average_leaks_per_night": 0,
+                "leak_rate_per_night_change": 0,
                 "leak_frequency": "none",
                 "risk_level": "low",
                 "trend": "stable",
-                "recommendations": []
+                "recommendations": [],
+                "daily_leak_record": []
             }
 
         total_records = len(records)
@@ -223,6 +239,33 @@ class AlertSystem:
         }
 
     def analyze_size_change_need(self, baby: Baby) -> Dict:
+        if not self._is_valid_size(baby.current_diaper_size):
+            valid_sizes = ", ".join(self._get_size_order())
+            return {
+                "baby_id": baby.id,
+                "baby_name": baby.name,
+                "current_size": baby.current_diaper_size,
+                "decision": "invalid_size",
+                "urgency": "high",
+                "total_score": 0,
+                "score_breakdown": {
+                    "weight_fit_score": 0,
+                    "leak_factor": 0
+                },
+                "weight_analysis": {
+                    "error": f"无效的纸尿裤尺码 '{baby.current_diaper_size}'，必须是以下之一: {valid_sizes}"
+                },
+                "leak_analysis": self.analyze_leak_patterns(baby.id),
+                "recommended_next_size": None,
+                "estimated_days_remaining_in_size": 0,
+                "suggested_action": {
+                    "action": "fix_invalid_size",
+                    "message": f"当前尺码 '{baby.current_diaper_size}' 无效，请更新为有效尺码: {valid_sizes}",
+                    "timeline": "立即",
+                    "valid_sizes": valid_sizes
+                }
+            }
+
         weight_analysis = self.analyze_weight_for_size(baby)
         leak_analysis = self.analyze_leak_patterns(baby.id)
 
@@ -290,6 +333,9 @@ class AlertSystem:
         }
 
     def _estimate_days_remaining_in_size(self, baby: Baby) -> int:
+        if not self._is_valid_size(baby.current_diaper_size):
+            return 0
+
         size_ref = self.db.query(DiaperSizeReference).filter(
             DiaperSizeReference.size == baby.current_diaper_size
         ).first()
@@ -362,6 +408,29 @@ class AlertSystem:
     def get_nighttime_risk_summary(self, baby_id: int) -> Dict:
         leak_analysis = self.analyze_leak_patterns(baby_id, days=14)
         baby = self.db.query(Baby).filter(Baby.id == baby_id).first()
+
+        if baby and not self._is_valid_size(baby.current_diaper_size):
+            valid_sizes = ", ".join(self._get_size_order())
+            return {
+                "baby_id": baby_id,
+                "baby_name": baby.name if baby else "Unknown",
+                "error": f"无效的纸尿裤尺码 '{baby.current_diaper_size}'，必须是以下之一: {valid_sizes}",
+                "risk_assessment": {
+                    "overall_risk": "invalid",
+                    "active_alerts": 0,
+                    "this_week_leaks": 0,
+                    "last_week_leaks": 0,
+                    "week_over_week_change_pct": 0,
+                    "average_leaks_per_night": 0,
+                    "trend": "stable"
+                },
+                "leak_statistics": {
+                    "last_14_days_total": 0,
+                    "leak_days": 0,
+                    "frequency": "none"
+                },
+                "suggestions": [f"请先更新为有效的纸尿裤尺码: {valid_sizes}"]
+            }
 
         alert_count = self.db.query(AlertRecord).filter(
             AlertRecord.baby_id == baby_id,

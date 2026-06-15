@@ -8,6 +8,12 @@ class DiaperPrediction:
     def __init__(self, db: Session):
         self.db = db
 
+    def _get_size_order(self) -> List[str]:
+        return ["NB", "S", "M", "L", "XL", "XXL"]
+
+    def _is_valid_size(self, size: str) -> bool:
+        return size and size.upper() in self._get_size_order()
+
     def _get_monthly_growth_rate(self, age_months: int) -> float:
         if age_months < 3:
             return 1.0
@@ -97,6 +103,15 @@ class DiaperPrediction:
         }
 
     def predict_daily_usage(self, baby: Baby, target_days: int = 7) -> List[Dict]:
+        if not self._is_valid_size(baby.current_diaper_size):
+            return [{
+                "error": f"无效的纸尿裤尺码 '{baby.current_diaper_size}'，必须是以下之一: {', '.join(self._get_size_order())}",
+                "date": None,
+                "day_of_week": None,
+                "predicted_usage": 0,
+                "confidence": 0
+            }]
+
         predictions = []
         size_ref = self.db.query(DiaperSizeReference).filter(
             DiaperSizeReference.size == baby.current_diaper_size
@@ -132,6 +147,15 @@ class DiaperPrediction:
         return predictions
 
     def calculate_inventory_days(self, baby_id: int, size: str) -> Dict:
+        if not self._is_valid_size(size):
+            return {
+                "current_inventory": 0,
+                "daily_usage": 0,
+                "available_days": 0,
+                "status": "invalid_size",
+                "error": f"无效的纸尿裤尺码 '{size}'，必须是以下之一: {', '.join(self._get_size_order())}"
+            }
+
         latest_inventory = self.db.query(InventoryRecord).filter(
             InventoryRecord.baby_id == baby_id,
             InventoryRecord.diaper_size == size
@@ -228,6 +252,23 @@ class DiaperPrediction:
         return sorted(result, key=lambda x: ["NB", "S", "M", "L", "XL", "XXL"].index(x["size"]) if x["size"] in ["NB", "S", "M", "L", "XL", "XXL"] else 99)
 
     def predict_future_consumption(self, baby: Baby, days: int = 30) -> Dict:
+        if not self._is_valid_size(baby.current_diaper_size):
+            valid_sizes = ", ".join(self._get_size_order())
+            return {
+                "baby_id": baby.id,
+                "baby_name": baby.name,
+                "current_size": baby.current_diaper_size,
+                "prediction_period_days": days,
+                "error": f"无效的纸尿裤尺码 '{baby.current_diaper_size}'，必须是以下之一: {valid_sizes}",
+                "daily_predictions": [],
+                "total_predicted_usage": 0,
+                "inventory_status": {
+                    "error": "无效的纸尿裤尺码，无法进行预测"
+                },
+                "expected_run_out_date": None,
+                "historical_average": None
+            }
+
         daily_predictions = self.predict_daily_usage(baby, days)
         inventory_status = self.calculate_inventory_days(baby.id, baby.current_diaper_size)
 
@@ -250,6 +291,23 @@ class DiaperPrediction:
         }
 
     def generate_restocking_list(self, baby: Baby, safety_days: int = 7) -> List[Dict]:
+        if not self._is_valid_size(baby.current_diaper_size):
+            valid_sizes = ", ".join(self._get_size_order())
+            return [{
+                "size": baby.current_diaper_size,
+                "is_current_size": True,
+                "is_next_size": False,
+                "current_inventory": 0,
+                "daily_usage_rate": 0,
+                "available_days": 0,
+                "recommended_quantity": 0,
+                "packs_needed": 0,
+                "priority": "critical",
+                "priority_score": 100,
+                "inventory_status": "invalid_size",
+                "error": f"无效的纸尿裤尺码 '{baby.current_diaper_size}'，必须是以下之一: {valid_sizes}"
+            }]
+
         sizes = ["NB", "S", "M", "L", "XL", "XXL"]
         restocking_items = []
 
