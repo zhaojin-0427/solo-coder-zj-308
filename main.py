@@ -1,9 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from contextlib import asynccontextmanager
 
 from app.database import engine, Base, SessionLocal
 from app.models import Baby, DiaperSizeReference, ConsumptionRecord, InventoryRecord, AlertRecord
-from app.utils import init_size_references, success_response
+from app.utils import init_size_references, success_response, error_response
+from app.schemas import ApiResponse
 
 from app.routers import babies, consumption, inventory, prediction, alerts
 
@@ -27,6 +31,25 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    resp = ApiResponse(code=exc.status_code, message=str(exc.detail), data=None)
+    return JSONResponse(status_code=exc.status_code, content=resp.model_dump())
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = []
+    for err in exc.errors():
+        errors.append({
+            "loc": err.get("loc", []),
+            "msg": err.get("msg", ""),
+            "type": err.get("type", "")
+        })
+    resp = ApiResponse(code=422, message="请求参数校验失败", data=errors)
+    return JSONResponse(status_code=422, content=resp.model_dump())
 
 app.include_router(babies.router)
 app.include_router(consumption.router)

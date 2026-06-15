@@ -241,14 +241,14 @@ class AlertSystem:
         base_score = change_scores.get(weight_analysis["recommendation"], 0)
         leak_factor = 0
         if leak_analysis["risk_level"] == "critical":
-            leak_factor = 25
+            leak_factor = 40
         elif leak_analysis["risk_level"] == "high":
-            leak_factor = 15
+            leak_factor = 30
         elif leak_analysis["risk_level"] == "medium":
-            leak_factor = 5
+            leak_factor = 15
 
         if leak_analysis["trend"] == "increasing":
-            leak_factor += 10
+            leak_factor += 15
 
         total_score = base_score + leak_factor
 
@@ -258,7 +258,7 @@ class AlertSystem:
         elif total_score >= 60:
             decision = "recommend_upgrade"
             urgency = "high"
-        elif total_score >= 30:
+        elif total_score >= 25:
             decision = "consider_upgrade"
             urgency = "medium"
         elif total_score >= -30:

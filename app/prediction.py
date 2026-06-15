@@ -135,7 +135,7 @@ class DiaperPrediction:
         latest_inventory = self.db.query(InventoryRecord).filter(
             InventoryRecord.baby_id == baby_id,
             InventoryRecord.diaper_size == size
-        ).order_by(InventoryRecord.record_date.desc()).first()
+        ).order_by(InventoryRecord.record_date.desc(), InventoryRecord.id.desc()).first()
 
         if not latest_inventory:
             return {
