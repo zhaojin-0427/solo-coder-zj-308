@@ -1,7 +1,10 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
+
+
+VALID_CAREGIVER_ROLES = ["parent", "grandparent", "nanny", "temp"]
 
 
 class Baby(Base):
@@ -23,6 +26,8 @@ class Baby(Base):
     growth_plan = relationship("GrowthPlan", back_populates="baby", uselist=False)
     package_specs = relationship("PackageSpec", back_populates="baby")
     plan_reminders = relationship("PlanReminder", back_populates="baby")
+    caregivers = relationship("Caregiver", back_populates="baby", cascade="all, delete-orphan")
+    shifts = relationship("Shift", back_populates="baby", cascade="all, delete-orphan")
 
 
 class DiaperSizeReference(Base):
@@ -139,3 +144,85 @@ class PlanReminder(Base):
     resolved_at = Column(DateTime)
 
     baby = relationship("Baby", back_populates="plan_reminders")
+
+
+class Caregiver(Base):
+    __tablename__ = "caregivers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    role = Column(String(20), nullable=False)
+    phone = Column(String(30))
+    notes = Column(String(500))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby", back_populates="caregivers")
+    shifts = relationship("Shift", back_populates="caregiver")
+    handover_items = relationship("HandoverItem", back_populates="caregiver")
+    todo_tasks = relationship("TodoTask", back_populates="caregiver", foreign_keys="TodoTask.caregiver_id")
+    completed_tasks = relationship("TodoTask", back_populates="completed_by", foreign_keys="TodoTask.completed_by_caregiver_id")
+
+
+class Shift(Base):
+    __tablename__ = "shifts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    caregiver_id = Column(Integer, ForeignKey("caregivers.id"), nullable=False)
+    shift_start = Column(DateTime, nullable=False)
+    shift_end = Column(DateTime)
+    inventory_snapshot = Column(Text)
+    previous_shift_anomalies = Column(Text)
+    notes = Column(String(1000))
+    status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby", back_populates="shifts")
+    caregiver = relationship("Caregiver", back_populates="shifts")
+    handover_items = relationship("HandoverItem", back_populates="shift")
+    todo_tasks = relationship("TodoTask", back_populates="shift")
+
+
+class HandoverItem(Base):
+    __tablename__ = "handover_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    caregiver_id = Column(Integer, ForeignKey("caregivers.id"), nullable=False)
+    item_type = Column(String(50), nullable=False)
+    content = Column(String(1000), nullable=False)
+    priority = Column(String(20), default="normal")
+    is_resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    shift = relationship("Shift", back_populates="handover_items")
+    baby = relationship("Baby")
+    caregiver = relationship("Caregiver", back_populates="handover_items")
+
+
+class TodoTask(Base):
+    __tablename__ = "todo_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    caregiver_id = Column(Integer, ForeignKey("caregivers.id"), nullable=False)
+    task_type = Column(String(50), nullable=False)
+    description = Column(String(500), nullable=False)
+    due_time = Column(DateTime)
+    is_completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime)
+    completed_by_caregiver_id = Column(Integer, ForeignKey("caregivers.id"))
+    notes = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    shift = relationship("Shift", back_populates="todo_tasks")
+    baby = relationship("Baby")
+    caregiver = relationship("Caregiver", back_populates="todo_tasks", foreign_keys=[caregiver_id])
+    completed_by = relationship("Caregiver", back_populates="completed_tasks", foreign_keys=[completed_by_caregiver_id])

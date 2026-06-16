@@ -7,12 +7,12 @@ from contextlib import asynccontextmanager
 from app.database import engine, Base, SessionLocal
 from app.models import (
     Baby, DiaperSizeReference, ConsumptionRecord, InventoryRecord, AlertRecord,
-    GrowthPlan, PackageSpec, PlanReminder
+    GrowthPlan, PackageSpec, PlanReminder, Caregiver, Shift, HandoverItem, TodoTask
 )
 from app.utils import init_size_references, success_response, error_response
 from app.schemas import ApiResponse
 
-from app.routers import babies, consumption, inventory, prediction, alerts, planning
+from app.routers import babies, consumption, inventory, prediction, alerts, planning, collaboration
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(inventory.router)
 app.include_router(prediction.router)
 app.include_router(alerts.router)
 app.include_router(planning.router)
+app.include_router(collaboration.router)
 
 
 @app.get("/", summary="健康检查", tags=["系统"])

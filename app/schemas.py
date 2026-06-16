@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -344,3 +344,344 @@ class PlanReminderItem(BaseModel):
     related_metric: Optional[float]
     threshold_value: Optional[float]
     action_suggestion: str
+
+
+VALID_CAREGIVER_ROLES = ["parent", "grandparent", "nanny", "temp"]
+VALID_HANDOVER_ITEM_TYPES = ["anomaly", "reminder", "completed_care", "note"]
+VALID_HANDOVER_PRIORITIES = ["urgent", "high", "normal", "low"]
+VALID_TODO_TASK_TYPES = ["diaper_change", "feeding", "medication", "bath", "sleep", "other"]
+VALID_SHIFT_STATUSES = ["active", "ended"]
+
+
+def validate_datetime_format(v: str) -> str:
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M"):
+        try:
+            datetime.strptime(v, fmt)
+            return v
+        except ValueError:
+            continue
+    raise ValueError("日期时间格式必须为 YYYY-MM-DDTHH:MM:SS 或 YYYY-MM-DD HH:MM:SS")
+
+
+def validate_caregiver_role(v: str) -> str:
+    if v not in VALID_CAREGIVER_ROLES:
+        raise ValueError(f"照护人角色必须是以下之一: {', '.join(VALID_CAREGIVER_ROLES)}")
+    return v
+
+
+def validate_handover_item_type(v: str) -> str:
+    if v not in VALID_HANDOVER_ITEM_TYPES:
+        raise ValueError(f"交接事项类型必须是以下之一: {', '.join(VALID_HANDOVER_ITEM_TYPES)}")
+    return v
+
+
+def validate_handover_priority(v: str) -> str:
+    if v not in VALID_HANDOVER_PRIORITIES:
+        raise ValueError(f"优先级必须是以下之一: {', '.join(VALID_HANDOVER_PRIORITIES)}")
+    return v
+
+
+def validate_todo_task_type(v: str) -> str:
+    if v not in VALID_TODO_TASK_TYPES:
+        raise ValueError(f"任务类型必须是以下之一: {', '.join(VALID_TODO_TASK_TYPES)}")
+    return v
+
+
+def validate_shift_status(v: str) -> str:
+    if v not in VALID_SHIFT_STATUSES:
+        raise ValueError(f"班次状态必须是以下之一: {', '.join(VALID_SHIFT_STATUSES)}")
+    return v
+
+
+class CaregiverCreate(BaseModel):
+    baby_id: int = Field(..., description="宝宝ID")
+    name: str = Field(..., min_length=1, max_length=100, description="照护人姓名")
+    role: str = Field(..., description="角色 parent/grandparent/nanny/temp")
+    phone: Optional[str] = Field(default=None, max_length=30, description="联系电话")
+    notes: Optional[str] = Field(default=None, max_length=500, description="备注")
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: str) -> str:
+        return validate_caregiver_role(v)
+
+
+class CaregiverUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    role: Optional[str] = None
+    phone: Optional[str] = Field(default=None, max_length=30)
+    notes: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+
+    @field_validator("role")
+    @classmethod
+    def check_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_caregiver_role(v)
+        return v
+
+
+class CaregiverResponse(BaseModel):
+    id: int
+    baby_id: int
+    name: str
+    role: str
+    phone: Optional[str]
+    notes: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ShiftCreate(BaseModel):
+    baby_id: int = Field(..., description="宝宝ID")
+    caregiver_id: int = Field(..., description="照护人ID")
+    shift_start: str = Field(..., description="班次开始时间")
+    inventory_snapshot: Optional[str] = Field(default=None, description="接班库存快照JSON")
+    previous_shift_anomalies: Optional[str] = Field(default=None, description="上一班异常事项")
+    notes: Optional[str] = Field(default=None, max_length=1000, description="备注")
+
+    @field_validator("shift_start")
+    @classmethod
+    def check_shift_start(cls, v: str) -> str:
+        return validate_datetime_format(v)
+
+
+class ShiftEnd(BaseModel):
+    shift_end: str = Field(..., description="班次结束时间")
+    inventory_snapshot: Optional[str] = Field(default=None, description="交班库存快照JSON")
+    notes: Optional[str] = Field(default=None, max_length=1000, description="备注")
+
+    @field_validator("shift_end")
+    @classmethod
+    def check_shift_end(cls, v: str) -> str:
+        return validate_datetime_format(v)
+
+
+class ShiftResponse(BaseModel):
+    id: int
+    baby_id: int
+    caregiver_id: int
+    shift_start: datetime
+    shift_end: Optional[datetime]
+    inventory_snapshot: Optional[str]
+    previous_shift_anomalies: Optional[str]
+    notes: Optional[str]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class HandoverItemCreate(BaseModel):
+    shift_id: int = Field(..., description="班次ID")
+    baby_id: int = Field(..., description="宝宝ID")
+    caregiver_id: int = Field(..., description="照护人ID")
+    item_type: str = Field(..., description="交接事项类型 anomaly/reminder/completed_care/note")
+    content: str = Field(..., min_length=1, max_length=1000, description="事项内容")
+    priority: Optional[str] = Field(default="normal", description="优先级 urgent/high/normal/low")
+
+    @field_validator("item_type")
+    @classmethod
+    def check_item_type(cls, v: str) -> str:
+        return validate_handover_item_type(v)
+
+    @field_validator("priority")
+    @classmethod
+    def check_priority(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_handover_priority(v)
+        return v
+
+
+class HandoverItemUpdate(BaseModel):
+    content: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    priority: Optional[str] = None
+    is_resolved: Optional[bool] = None
+
+    @field_validator("priority")
+    @classmethod
+    def check_priority(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_handover_priority(v)
+        return v
+
+
+class HandoverItemResponse(BaseModel):
+    id: int
+    shift_id: int
+    baby_id: int
+    caregiver_id: int
+    item_type: str
+    content: str
+    priority: str
+    is_resolved: bool
+    resolved_at: Optional[datetime]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TodoTaskCreate(BaseModel):
+    shift_id: int = Field(..., description="班次ID")
+    baby_id: int = Field(..., description="宝宝ID")
+    caregiver_id: int = Field(..., description="照护人ID")
+    task_type: str = Field(..., description="任务类型 diaper_change/feeding/medication/bath/sleep/other")
+    description: str = Field(..., min_length=1, max_length=500, description="任务描述")
+    due_time: Optional[str] = Field(default=None, description="截止时间")
+    notes: Optional[str] = Field(default=None, max_length=500, description="备注")
+
+    @field_validator("task_type")
+    @classmethod
+    def check_task_type(cls, v: str) -> str:
+        return validate_todo_task_type(v)
+
+    @field_validator("due_time")
+    @classmethod
+    def check_due_time(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_datetime_format(v)
+        return v
+
+
+class TodoTaskComplete(BaseModel):
+    is_completed: bool = Field(default=True, description="是否已完成")
+    completed_by_caregiver_id: int = Field(..., description="完成人照护人ID")
+    notes: Optional[str] = Field(default=None, max_length=500, description="备注")
+
+
+class TodoTaskResponse(BaseModel):
+    id: int
+    shift_id: int
+    baby_id: int
+    caregiver_id: int
+    task_type: str
+    description: str
+    due_time: Optional[datetime]
+    is_completed: bool
+    completed_at: Optional[datetime]
+    completed_by_caregiver_id: Optional[int]
+    notes: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+CAREGIVER_ROLE_PERMISSIONS = {
+    "parent": {
+        "name": "父母",
+        "description": "拥有全部权限，可管理照护人、查看所有数据、执行所有操作",
+        "permissions": [
+            "manage_caregivers",
+            "view_all_records",
+            "create_shifts",
+            "end_shifts",
+            "create_handover_items",
+            "manage_todo_tasks",
+            "view_summary",
+            "view_risks",
+            "view_statistics"
+        ]
+    },
+    "grandparent": {
+        "name": "祖辈",
+        "description": "可执行日常照护、查看班次和交接事项",
+        "permissions": [
+            "view_all_records",
+            "create_shifts",
+            "end_shifts",
+            "create_handover_items",
+            "manage_todo_tasks",
+            "view_summary",
+            "view_risks"
+        ]
+    },
+    "nanny": {
+        "name": "保姆",
+        "description": "可执行日常照护、记录交接事项和完成任务",
+        "permissions": [
+            "create_shifts",
+            "end_shifts",
+            "create_handover_items",
+            "manage_todo_tasks",
+            "view_summary"
+        ]
+    },
+    "temp": {
+        "name": "临时照护人",
+        "description": "仅可查看自己的班次和待办任务",
+        "permissions": [
+            "create_handover_items",
+            "manage_todo_tasks"
+        ]
+    }
+}
+
+
+class RolePermissionResponse(BaseModel):
+    role: str
+    name: str
+    description: str
+    permissions: List[str]
+
+
+class ShiftDetailResponse(BaseModel):
+    id: int
+    baby_id: int
+    caregiver_id: int
+    caregiver_name: Optional[str] = None
+    caregiver_role: Optional[str] = None
+    shift_start: datetime
+    shift_end: Optional[datetime]
+    inventory_snapshot: Optional[str]
+    previous_shift_anomalies: Optional[str]
+    notes: Optional[str]
+    status: str
+    handover_item_count: int = 0
+    todo_task_count: int = 0
+    completed_task_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class HandoverSummaryResponse(BaseModel):
+    baby_id: int
+    baby_name: str
+    current_size: str
+    generated_at: str
+    recent_consumption: Dict[str, Any]
+    current_inventory: List[Dict[str, Any]]
+    unresolved_plan_reminders: List[Dict[str, Any]]
+    shift_summaries: List[Dict[str, Any]]
+    collaboration_risks: List[Dict[str, Any]]
+    risk_summary: Dict[str, int]
+
+
+class CollaborationRiskResponse(BaseModel):
+    risk_type: str
+    severity: str
+    message: str
+    details: Dict[str, Any]
+
+
+class RiskListResponse(BaseModel):
+    baby_id: int
+    total_count: int
+    high_count: int
+    medium_count: int
+    low_count: int
+    risks: List[Dict[str, Any]]
+
+
+class CaregiverWorkloadResponse(BaseModel):
+    baby_id: int
+    period_days: int
+    caregivers: List[Dict[str, Any]]
+    summary: Dict[str, Any]
