@@ -685,3 +685,304 @@ class CaregiverWorkloadResponse(BaseModel):
     period_days: int
     caregivers: List[Dict[str, Any]]
     summary: Dict[str, Any]
+
+
+VALID_RASH_GRADES = [0, 1, 2, 3, 4]
+VALID_CARE_ACTIONS = ["clean", "air_dry", "apply_cream", "change_diaper", "other"]
+VALID_PRODUCT_TYPES = ["diaper", "wipe", "rash_cream", "cleanser", "other"]
+RASH_GRADE_DESCRIPTIONS = {
+    0: "正常皮肤，无红疹",
+    1: "轻度：皮肤微红，无破损",
+    2: "中度：明显红疹，局部肿胀",
+    3: "重度：广泛红疹，有破皮",
+    4: "严重：破皮渗液，可能感染"
+}
+
+
+def validate_rash_grade(v: int) -> int:
+    if v not in VALID_RASH_GRADES:
+        raise ValueError(f"红疹等级必须是以下之一: {', '.join(map(str, VALID_RASH_GRADES))}")
+    return v
+
+
+def validate_care_action(v: str) -> str:
+    if v and v.lower() not in VALID_CARE_ACTIONS:
+        raise ValueError(f"护理动作类型必须是以下之一: {', '.join(VALID_CARE_ACTIONS)}")
+    return v.lower() if v else v
+
+
+def validate_care_actions_list(v: str) -> str:
+    if not v:
+        return v
+    actions = [a.strip().lower() for a in v.split(",")]
+    for action in actions:
+        if action and action not in VALID_CARE_ACTIONS:
+            raise ValueError(f"护理动作 '{action}' 无效，必须是以下之一: {', '.join(VALID_CARE_ACTIONS)}")
+    return ",".join(actions)
+
+
+def validate_product_type(v: str) -> str:
+    if v and v.lower() not in VALID_PRODUCT_TYPES:
+        raise ValueError(f"用品类型必须是以下之一: {', '.join(VALID_PRODUCT_TYPES)}")
+    return v.lower() if v else v
+
+
+def validate_non_negative(v: float) -> float:
+    if v is not None and v < 0:
+        raise ValueError("数值不能为负数")
+    return v
+
+
+class SkinObservationCreate(BaseModel):
+    baby_id: int = Field(..., description="宝宝ID")
+    caregiver_id: int = Field(..., description="照护人ID")
+    observation_time: str = Field(..., description="观察时间 YYYY-MM-DDTHH:MM:SS")
+    rash_grade: int = Field(..., description="红疹等级 0-4")
+    has_redness: Optional[bool] = Field(default=False, description="是否有发红")
+    has_breakdown: Optional[bool] = Field(default=False, description="是否有破皮")
+    has_exudate: Optional[bool] = Field(default=False, description="是否有渗液")
+    skin_location: Optional[str] = Field(default=None, max_length=100, description="皮肤部位")
+    care_actions: Optional[str] = Field(default=None, max_length=200, description="护理动作，多个用逗号分隔")
+    notes: Optional[str] = Field(default=None, max_length=1000, description="备注")
+    change_frequency_24h: Optional[int] = Field(default=0, ge=0, description="近24小时更换频率")
+    nighttime_leaks: Optional[int] = Field(default=0, ge=0, description="夜间漏尿次数")
+    diaper_brand: Optional[str] = Field(default=None, max_length=100, description="纸尿裤品牌")
+    diaper_batch: Optional[str] = Field(default=None, max_length=100, description="纸尿裤批次")
+
+    @field_validator("observation_time")
+    @classmethod
+    def check_observation_time(cls, v: str) -> str:
+        return validate_datetime_format(v)
+
+    @field_validator("rash_grade")
+    @classmethod
+    def check_rash_grade(cls, v: int) -> int:
+        return validate_rash_grade(v)
+
+    @field_validator("care_actions")
+    @classmethod
+    def check_care_actions(cls, v: Optional[str]) -> Optional[str]:
+        return validate_care_actions_list(v) if v is not None else v
+
+    @field_validator("change_frequency_24h", "nighttime_leaks")
+    @classmethod
+    def check_non_negative_int(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("数值不能为负数")
+        return v
+
+
+class SkinObservationUpdate(BaseModel):
+    rash_grade: Optional[int] = None
+    has_redness: Optional[bool] = None
+    has_breakdown: Optional[bool] = None
+    has_exudate: Optional[bool] = None
+    skin_location: Optional[str] = Field(default=None, max_length=100)
+    care_actions: Optional[str] = Field(default=None, max_length=200)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    change_frequency_24h: Optional[int] = Field(default=None, ge=0)
+    nighttime_leaks: Optional[int] = Field(default=None, ge=0)
+    diaper_brand: Optional[str] = Field(default=None, max_length=100)
+    diaper_batch: Optional[str] = Field(default=None, max_length=100)
+
+    @field_validator("rash_grade")
+    @classmethod
+    def check_rash_grade(cls, v: Optional[int]) -> Optional[int]:
+        return validate_rash_grade(v) if v is not None else v
+
+    @field_validator("care_actions")
+    @classmethod
+    def check_care_actions(cls, v: Optional[str]) -> Optional[str]:
+        return validate_care_actions_list(v) if v is not None else v
+
+    @field_validator("change_frequency_24h", "nighttime_leaks")
+    @classmethod
+    def check_non_negative_int(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and v < 0:
+            raise ValueError("数值不能为负数")
+        return v
+
+
+class SkinObservationResponse(BaseModel):
+    id: int
+    baby_id: int
+    caregiver_id: int
+    observation_time: datetime
+    rash_grade: int
+    rash_grade_description: Optional[str] = None
+    has_redness: bool
+    has_breakdown: bool
+    has_exudate: bool
+    skin_location: Optional[str]
+    care_actions: Optional[str]
+    notes: Optional[str]
+    change_frequency_24h: int
+    nighttime_leaks: int
+    diaper_brand: Optional[str]
+    diaper_batch: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CareProductCreate(BaseModel):
+    baby_id: int = Field(..., description="宝宝ID")
+    product_type: str = Field(..., description="用品类型 diaper/wipe/rash_cream/cleanser/other")
+    brand: str = Field(..., min_length=1, max_length=100, description="品牌")
+    product_name: Optional[str] = Field(default=None, max_length=200, description="产品名称")
+    batch_number: Optional[str] = Field(default=None, max_length=100, description="批次号")
+    size: Optional[str] = Field(default=None, max_length=50, description="尺码/规格")
+    start_date: Optional[str] = Field(default=None, description="开始使用日期 YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, description="停止使用日期 YYYY-MM-DD")
+    is_active: Optional[bool] = Field(default=True, description="是否正在使用")
+    ingredients: Optional[str] = Field(default=None, description="成分说明")
+    notes: Optional[str] = Field(default=None, max_length=1000, description="备注")
+
+    @field_validator("product_type")
+    @classmethod
+    def check_product_type(cls, v: str) -> str:
+        return validate_product_type(v)
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_date_format(v)
+        return v
+
+
+class CareProductUpdate(BaseModel):
+    product_type: Optional[str] = None
+    brand: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    product_name: Optional[str] = Field(default=None, max_length=200)
+    batch_number: Optional[str] = Field(default=None, max_length=100)
+    size: Optional[str] = Field(default=None, max_length=50)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    is_active: Optional[bool] = None
+    ingredients: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("product_type")
+    @classmethod
+    def check_product_type(cls, v: Optional[str]) -> Optional[str]:
+        return validate_product_type(v) if v is not None else v
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_date_format(v)
+        return v
+
+
+class CareProductResponse(BaseModel):
+    id: int
+    baby_id: int
+    product_type: str
+    brand: str
+    product_name: Optional[str]
+    batch_number: Optional[str]
+    size: Optional[str]
+    start_date: Optional[str]
+    end_date: Optional[str]
+    is_active: bool
+    ingredients: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProductUsageCreate(BaseModel):
+    baby_id: int = Field(..., description="宝宝ID")
+    product_id: int = Field(..., description="用品档案ID")
+    skin_record_id: Optional[int] = Field(default=None, description="关联皮肤观察记录ID")
+    caregiver_id: int = Field(..., description="照护人ID")
+    usage_time: str = Field(..., description="使用时间 YYYY-MM-DDTHH:MM:SS")
+    usage_amount: Optional[float] = Field(default=1.0, description="使用量")
+    usage_notes: Optional[str] = Field(default=None, max_length=500, description="使用备注")
+
+    @field_validator("usage_time")
+    @classmethod
+    def check_usage_time(cls, v: str) -> str:
+        return validate_datetime_format(v)
+
+    @field_validator("usage_amount")
+    @classmethod
+    def check_usage_amount(cls, v: Optional[float]) -> Optional[float]:
+        return validate_non_negative(v) if v is not None else v
+
+
+class ProductUsageResponse(BaseModel):
+    id: int
+    baby_id: int
+    product_id: int
+    product_name: Optional[str] = None
+    product_brand: Optional[str] = None
+    product_type: Optional[str] = None
+    skin_record_id: Optional[int]
+    caregiver_id: int
+    caregiver_name: Optional[str] = None
+    usage_time: datetime
+    usage_amount: float
+    usage_notes: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RashRiskAssessment(BaseModel):
+    baby_id: int
+    assessment_time: str
+    overall_risk_level: str
+    overall_risk_score: float
+    risk_factors: List[Dict[str, Any]]
+    trend_analysis: Dict[str, Any]
+    recommendations: List[Dict[str, Any]]
+
+
+class AllergenCandidate(BaseModel):
+    product_id: int
+    product_name: str
+    product_type: str
+    brand: str
+    correlation_score: float
+    confidence: float
+    evidence: List[str]
+    recommendation: str
+
+
+class CareEffectReview(BaseModel):
+    baby_id: int
+    review_period_days: int
+    average_rash_grade_before: float
+    average_rash_grade_after: float
+    improvement_rate: float
+    effective_care_actions: List[Dict[str, Any]]
+    effective_products: List[Dict[str, Any]]
+    ineffective_interventions: List[Dict[str, Any]]
+    suggestions: List[str]
+
+
+class SkinCareAlertResponse(BaseModel):
+    id: int
+    baby_id: int
+    alert_type: str
+    alert_level: str
+    risk_score: float
+    message: str
+    related_record_id: Optional[int]
+    related_product_id: Optional[int]
+    triggered_at: datetime
+    resolved: bool
+    resolved_at: Optional[datetime]
+    resolution_notes: Optional[str]
+
+    class Config:
+        from_attributes = True

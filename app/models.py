@@ -226,3 +226,94 @@ class TodoTask(Base):
     baby = relationship("Baby")
     caregiver = relationship("Caregiver", back_populates="todo_tasks", foreign_keys=[caregiver_id])
     completed_by = relationship("Caregiver", back_populates="completed_tasks", foreign_keys=[completed_by_caregiver_id])
+
+
+VALID_RASH_GRADES = [0, 1, 2, 3, 4]
+VALID_CARE_ACTIONS = ["clean", "air_dry", "apply_cream", "change_diaper", "other"]
+VALID_PRODUCT_TYPES = ["diaper", "wipe", "rash_cream", "cleanser", "other"]
+
+
+class SkinObservationRecord(Base):
+    __tablename__ = "skin_observation_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    caregiver_id = Column(Integer, ForeignKey("caregivers.id"), nullable=False)
+    observation_time = Column(DateTime, nullable=False)
+    rash_grade = Column(Integer, nullable=False)
+    has_redness = Column(Boolean, default=False)
+    has_breakdown = Column(Boolean, default=False)
+    has_exudate = Column(Boolean, default=False)
+    skin_location = Column(String(100))
+    care_actions = Column(String(200))
+    notes = Column(String(1000))
+    change_frequency_24h = Column(Integer, default=0)
+    nighttime_leaks = Column(Integer, default=0)
+    diaper_brand = Column(String(100))
+    diaper_batch = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby")
+    caregiver = relationship("Caregiver", foreign_keys=[caregiver_id])
+    product_usage = relationship("ProductUsageLog", back_populates="skin_record", cascade="all, delete-orphan")
+
+
+class CareProductArchive(Base):
+    __tablename__ = "care_product_archives"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    product_type = Column(String(50), nullable=False)
+    brand = Column(String(100), nullable=False)
+    product_name = Column(String(200))
+    batch_number = Column(String(100))
+    size = Column(String(50))
+    start_date = Column(String(20))
+    end_date = Column(String(20))
+    is_active = Column(Boolean, default=True)
+    ingredients = Column(Text)
+    notes = Column(String(1000))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby")
+    usage_logs = relationship("ProductUsageLog", back_populates="product")
+
+
+class ProductUsageLog(Base):
+    __tablename__ = "product_usage_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("care_product_archives.id"), nullable=False)
+    skin_record_id = Column(Integer, ForeignKey("skin_observation_records.id"))
+    caregiver_id = Column(Integer, ForeignKey("caregivers.id"), nullable=False)
+    usage_time = Column(DateTime, nullable=False)
+    usage_amount = Column(Float, default=1.0)
+    usage_notes = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    baby = relationship("Baby")
+    product = relationship("CareProductArchive", back_populates="usage_logs")
+    skin_record = relationship("SkinObservationRecord", back_populates="product_usage")
+    caregiver = relationship("Caregiver", foreign_keys=[caregiver_id])
+
+
+class SkinCareAlert(Base):
+    __tablename__ = "skin_care_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    alert_type = Column(String(50), nullable=False)
+    alert_level = Column(String(20), nullable=False)
+    risk_score = Column(Float, default=0.0)
+    message = Column(String(500), nullable=False)
+    related_record_id = Column(Integer)
+    related_product_id = Column(Integer)
+    triggered_at = Column(DateTime, default=datetime.utcnow)
+    resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime)
+    resolution_notes = Column(String(500))
+
+    baby = relationship("Baby")
