@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from sqlalchemy.orm import Session
-from .models import Baby, ConsumptionRecord, DiaperSizeReference, AlertRecord
+from .models import Baby, ConsumptionRecord, DiaperSizeReference, AlertRecord, PlanReminder, GrowthPlan
 
 
 class AlertSystem:
@@ -594,4 +594,280 @@ class AlertSystem:
                 "medium": sum(1 for a in alerts if a.alert_level == "medium"),
                 "low": sum(1 for a in alerts if a.alert_level == "low")
             }
+        }
+
+
+class PlanReminderSystem:
+    def __init__(self, db: Session):
+        self.db = db
+        self.alert_system = AlertSystem(db)
+
+    def _get_size_order(self) -> List[str]:
+        return ["NB", "S", "M", "L", "XL", "XXL"]
+
+    def _is_valid_size(self, size: str) -> bool:
+        return size and size.upper() in self._get_size_order()
+
+    def _get_growth_plan(self, baby_id: int) -> GrowthPlan:
+        from .prediction import GrowthPlanning
+        planner = GrowthPlanning(self.db)
+        return planner._get_growth_plan(baby_id)
+
+    def generate_plan_reminders(self, baby: Baby, planning_period_days: int = 30) -> List[Dict]:
+        if not self._is_valid_size(baby.current_diaper_size):
+            return []
+
+        from .prediction import GrowthPlanning
+        planner = GrowthPlanning(self.db)
+
+        reminders = []
+
+        overstock_risks = planner.assess_overstock_risk(baby, planning_period_days)
+        for risk in overstock_risks:
+            if risk["size_status"] == "current" and risk["risk_level"] in ["high", "medium"]:
+                reminders.append({
+                    "reminder_type": "overstock_warning",
+                    "reminder_level": risk["risk_level"],
+                    "reason_code": "OVERSTOCK_CURRENT_SIZE",
+                    "message": f"当前{risk['size']}码库存过多，预计可用{risk['estimated_stock_duration_days']}天，超过预计使用周期，可能造成浪费",
+                    "related_size": risk["size"],
+                    "related_metric": risk["overstock_pieces"],
+                    "threshold_value": risk["expected_usage_period_days"],
+                    "action_suggestion": f"建议减少{risk['size']}码购买量，可考虑赠送或转让多余库存"
+                })
+            elif risk["size_status"] == "past" and risk["risk_level"] in ["high", "medium"]:
+                reminders.append({
+                    "reminder_type": "overstock_warning",
+                    "reminder_level": risk["risk_level"],
+                    "reason_code": "OVERSTOCK_CURRENT_SIZE",
+                    "message": f"{risk['size']}码已过使用期，但仍有{risk['current_inventory']}片库存，浪费风险{risk['waste_risk_pct']}%",
+                    "related_size": risk["size"],
+                    "related_metric": risk["waste_risk_pct"],
+                    "threshold_value": 30.0,
+                    "action_suggestion": "建议尽快处理闲置库存，可考虑转让或捐赠"
+                })
+
+        next_size_readiness_list = planner.calculate_next_size_readiness(baby)
+        for readiness in next_size_readiness_list:
+            if readiness["readiness_level"] in ["imminent", "preparing"]:
+                if readiness["current_inventory"] < readiness["recommended_pre_stock_pieces"] * 0.5:
+                    shortage = readiness["recommended_pre_stock_pieces"] - readiness["current_inventory"]
+                    level = "high" if readiness["readiness_level"] == "imminent" else "medium"
+                    reminders.append({
+                        "reminder_type": "understock_warning",
+                        "reminder_level": level,
+                        "reason_code": "NEXT_SIZE_UNDERSTOCK",
+                        "message": f"{readiness['size']}码预计{readiness['estimated_days_to_start']}天后开始使用，但库存不足，建议提前备货",
+                        "related_size": readiness["size"],
+                        "related_metric": float(readiness["current_inventory"]),
+                        "threshold_value": float(readiness["recommended_pre_stock_pieces"]),
+                        "action_suggestion": f"建议购买至少{shortage}片{readiness['size']}码作为过渡备货"
+                    })
+
+        leak_analysis = self.alert_system.analyze_leak_patterns(baby.id, days=14)
+        size_change_info = planner.estimate_size_change_date(baby)
+
+        if leak_analysis["trend"] == "increasing" and leak_analysis["risk_level"] in ["high", "critical"]:
+            leak_adjustment = size_change_info.get("leak_adjustment_days", 0)
+            if leak_adjustment < 0:
+                reminders.append({
+                    "reminder_type": "size_transition_alert",
+                    "reminder_level": "high" if leak_analysis["risk_level"] == "critical" else "medium",
+                    "reason_code": "NIGHTTIME_LEAK_INCREASE",
+                    "message": f"夜间漏尿频率上升，可能需要提前换码，预计换码日期提前{abs(leak_adjustment)}天",
+                    "related_size": size_change_info.get("next_size"),
+                    "related_metric": float(leak_analysis.get("total_leaks", 0)),
+                    "threshold_value": 3.0,
+                    "action_suggestion": f"建议提前准备{size_change_info.get('next_size')}码，或考虑使用吸收量更大的夜用款"
+                })
+
+        plan = self._get_growth_plan(baby.id)
+        if plan.promo_stocking_preference == "aggressive":
+            for risk in overstock_risks:
+                if risk["size_status"] == "current" and risk["risk_level"] == "high":
+                    reminders.append({
+                        "reminder_type": "promo_stocking_risk",
+                        "reminder_level": "high",
+                        "reason_code": "PROMO_OVERSTOCK",
+                        "message": f"促销囤货量过大，{risk['size']}码库存超过可消耗周期{risk['waste_risk_pct']}%，存在浪费风险",
+                        "related_size": risk["size"],
+                        "related_metric": risk["waste_risk_pct"],
+                        "threshold_value": 30.0,
+                        "action_suggestion": "建议调整囤货策略，控制促销购买量在合理使用范围内"
+                    })
+                    break
+
+        if size_change_info.get("next_size") and size_change_info.get("days_remaining", 999) <= 30:
+            level = "high" if size_change_info.get("days_remaining", 999) <= 14 else "medium"
+            reminders.append({
+                "reminder_type": "size_transition_alert",
+                "reminder_level": level,
+                "reason_code": "SIZE_TRANSITION_SOON",
+                "message": f"预计{size_change_info['days_remaining']}天后换码到{size_change_info['next_size']}码，请做好准备",
+                "related_size": size_change_info["next_size"],
+                "related_metric": float(size_change_info["days_remaining"]),
+                "threshold_value": 30.0,
+                "action_suggestion": f"建议开始购买小包装{size_change_info['next_size']}码试用，确认合适后再大量采购"
+            })
+
+        from .prediction import DiaperPrediction
+        predictor = DiaperPrediction(self.db)
+        inventory = predictor.calculate_inventory_days(baby.id, baby.current_diaper_size)
+        safety_days = plan.safety_stock_days or 7
+
+        if inventory["available_days"] != float('inf') and inventory["available_days"] < safety_days:
+            reminders.append({
+                "reminder_type": "safety_stock_warning",
+                "reminder_level": "high" if inventory["available_days"] < 3 else "medium",
+                "reason_code": "SAFETY_STOCK_LOW",
+                "message": f"{baby.current_diaper_size}码库存仅够用{inventory['available_days']}天，低于安全库存天数{safety_days}天",
+                "related_size": baby.current_diaper_size,
+                "related_metric": float(inventory["available_days"]),
+                "threshold_value": float(safety_days),
+                "action_suggestion": "建议尽快补货，确保库存达到安全水平"
+            })
+
+        if plan.growth_rate_kg_per_month and plan.growth_rate_kg_per_month > 0:
+            default_rate = predictor._get_monthly_growth_rate(baby.current_age_months)
+            actual_rate = plan.growth_rate_kg_per_month
+
+            if actual_rate > default_rate * 1.3:
+                reminders.append({
+                    "reminder_type": "growth_rate_alert",
+                    "reminder_level": "medium",
+                    "reason_code": "GROWTH_FASTER_THAN_EXPECTED",
+                    "message": f"宝宝成长速度快于预期（{actual_rate}kg/月 vs 平均{default_rate}kg/月），可能需要更早换码",
+                    "related_size": size_change_info.get("next_size"),
+                    "related_metric": round(actual_rate / default_rate * 100, 1),
+                    "threshold_value": 130.0,
+                    "action_suggestion": "建议增加下一尺码的备货量，提前做好换码准备"
+                })
+            elif actual_rate < default_rate * 0.7:
+                reminders.append({
+                    "reminder_type": "growth_rate_alert",
+                    "reminder_level": "low",
+                    "reason_code": "GROWTH_SLOWER_THAN_EXPECTED",
+                    "message": f"宝宝成长速度慢于预期（{actual_rate}kg/月 vs 平均{default_rate}kg/月），当前尺码使用时间可能延长",
+                    "related_size": baby.current_diaper_size,
+                    "related_metric": round(actual_rate / default_rate * 100, 1),
+                    "threshold_value": 70.0,
+                    "action_suggestion": "可适当减少囤货量，避免因成长缓慢造成库存积压"
+                })
+
+        return reminders
+
+    def create_plan_reminder(self, baby_id: int, reminder_type: str, reminder_level: str,
+                             reason_code: str, message: str, related_size: str = None,
+                             related_metric: float = None, threshold_value: float = None) -> PlanReminder:
+        reminder = PlanReminder(
+            baby_id=baby_id,
+            reminder_type=reminder_type,
+            reminder_level=reminder_level,
+            reason_code=reason_code,
+            message=message,
+            related_size=related_size,
+            related_metric=related_metric,
+            threshold_value=threshold_value
+        )
+        self.db.add(reminder)
+        self.db.commit()
+        self.db.refresh(reminder)
+        return reminder
+
+    def check_and_create_plan_reminders(self, baby: Baby, planning_period_days: int = 30) -> List[PlanReminder]:
+        reminders = []
+        plan_reminders_data = self.generate_plan_reminders(baby, planning_period_days)
+
+        for reminder_data in plan_reminders_data:
+            existing = self.db.query(PlanReminder).filter(
+                PlanReminder.baby_id == baby.id,
+                PlanReminder.reason_code == reminder_data["reason_code"],
+                PlanReminder.related_size == reminder_data.get("related_size"),
+                PlanReminder.resolved == False
+            ).first()
+
+            if not existing:
+                reminder = self.create_plan_reminder(
+                    baby_id=baby.id,
+                    reminder_type=reminder_data["reminder_type"],
+                    reminder_level=reminder_data["reminder_level"],
+                    reason_code=reminder_data["reason_code"],
+                    message=reminder_data["message"],
+                    related_size=reminder_data.get("related_size"),
+                    related_metric=reminder_data.get("related_metric"),
+                    threshold_value=reminder_data.get("threshold_value")
+                )
+                reminders.append(reminder)
+
+        return reminders
+
+    def get_plan_reminders(self, baby_id: int, resolved: bool = None, days: int = 30) -> List[Dict]:
+        cutoff = datetime.now() - timedelta(days=days)
+        query = self.db.query(PlanReminder).filter(
+            PlanReminder.baby_id == baby_id,
+            PlanReminder.triggered_at >= cutoff
+        )
+
+        if resolved is not None:
+            query = query.filter(PlanReminder.resolved == resolved)
+
+        reminders = query.order_by(PlanReminder.triggered_at.desc()).all()
+
+        return [
+            {
+                "id": r.id,
+                "reminder_type": r.reminder_type,
+                "reminder_level": r.reminder_level,
+                "reason_code": r.reason_code,
+                "message": r.message,
+                "related_size": r.related_size,
+                "related_metric": r.related_metric,
+                "threshold_value": r.threshold_value,
+                "triggered_at": r.triggered_at,
+                "resolved": r.resolved,
+                "resolved_at": r.resolved_at
+            }
+            for r in reminders
+        ]
+
+    def resolve_plan_reminder(self, reminder_id: int, resolved: bool = True) -> Optional[PlanReminder]:
+        reminder = self.db.query(PlanReminder).filter(PlanReminder.id == reminder_id).first()
+        if not reminder:
+            return None
+
+        reminder.resolved = resolved
+        if resolved:
+            reminder.resolved_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(reminder)
+        return reminder
+
+    def get_plan_reminder_statistics(self, baby_id: int, days: int = 30) -> Dict:
+        cutoff = datetime.now() - timedelta(days=days)
+        reminders = self.db.query(PlanReminder).filter(
+            PlanReminder.baby_id == baby_id,
+            PlanReminder.triggered_at >= cutoff
+        ).all()
+
+        total = len(reminders)
+        unresolved = sum(1 for r in reminders if not r.resolved)
+
+        reason_code_counts = {}
+        for r in reminders:
+            code = r.reason_code
+            reason_code_counts[code] = reason_code_counts.get(code, 0) + 1
+
+        level_distribution = {
+            "critical": sum(1 for r in reminders if r.reminder_level == "critical"),
+            "high": sum(1 for r in reminders if r.reminder_level == "high"),
+            "medium": sum(1 for r in reminders if r.reminder_level == "medium"),
+            "low": sum(1 for r in reminders if r.reminder_level == "low")
+        }
+
+        return {
+            "period_days": days,
+            "total_reminders": total,
+            "unresolved_reminders": unresolved,
+            "reason_code_distribution": reason_code_counts,
+            "level_distribution": level_distribution
         }

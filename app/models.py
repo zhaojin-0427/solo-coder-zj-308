@@ -20,6 +20,9 @@ class Baby(Base):
     consumption_records = relationship("ConsumptionRecord", back_populates="baby")
     inventory_records = relationship("InventoryRecord", back_populates="baby")
     alerts = relationship("AlertRecord", back_populates="baby")
+    growth_plan = relationship("GrowthPlan", back_populates="baby", uselist=False)
+    package_specs = relationship("PackageSpec", back_populates="baby")
+    plan_reminders = relationship("PlanReminder", back_populates="baby")
 
 
 class DiaperSizeReference(Base):
@@ -81,3 +84,58 @@ class AlertRecord(Base):
     resolved_at = Column(DateTime)
 
     baby = relationship("Baby", back_populates="alerts")
+
+
+class GrowthPlan(Base):
+    __tablename__ = "growth_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    target_weight_kg = Column(Float, nullable=True)
+    target_date = Column(String(20), nullable=True)
+    growth_rate_kg_per_month = Column(Float, nullable=True)
+    promo_stocking_preference = Column(String(20), default="moderate")
+    preferred_brand = Column(String(100), nullable=True)
+    safety_stock_days = Column(Integer, default=7)
+    planning_horizon_days = Column(Integer, default=90)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby", back_populates="growth_plan")
+
+
+class PackageSpec(Base):
+    __tablename__ = "package_specs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    brand = Column(String(100), nullable=False)
+    size = Column(String(20), nullable=False)
+    pieces_per_pack = Column(Integer, nullable=False)
+    packs_per_box = Column(Integer, default=1)
+    price_per_pack = Column(Float, nullable=True)
+    is_active = Column(Boolean, default=True)
+    notes = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    baby = relationship("Baby", back_populates="package_specs")
+
+
+class PlanReminder(Base):
+    __tablename__ = "plan_reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baby_id = Column(Integer, ForeignKey("babies.id"), nullable=False)
+    reminder_type = Column(String(50), nullable=False)
+    reminder_level = Column(String(20), nullable=False)
+    reason_code = Column(String(50), nullable=False)
+    message = Column(String(500), nullable=False)
+    related_size = Column(String(20))
+    related_metric = Column(Float, nullable=True)
+    threshold_value = Column(Float, nullable=True)
+    triggered_at = Column(DateTime, default=datetime.utcnow)
+    resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime)
+
+    baby = relationship("Baby", back_populates="plan_reminders")
