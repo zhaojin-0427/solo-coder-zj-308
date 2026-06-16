@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import json
 
@@ -53,6 +53,39 @@ def _check_shift_exists(db: Session, shift_id: int, baby_id: Optional[int] = Non
     return query.first()
 
 
+def _check_caregiver_permission(caregiver: Caregiver, permission: str) -> bool:
+    role_perms = CAREGIVER_ROLE_PERMISSIONS.get(caregiver.role, {})
+    return permission in role_perms.get("permissions", [])
+
+
+def _validate_inventory_snapshot(snapshot: Optional[str]) -> Optional[str]:
+    if not snapshot:
+        return None
+    try:
+        data = json.loads(snapshot)
+    except json.JSONDecodeError:
+        return "库存快照格式错误，必须是有效的JSON字符串"
+    if not isinstance(data, dict):
+        return "库存快照必须是JSON对象，格式为 {\"尺码\": 数量}"
+    for size, qty in data.items():
+        if not isinstance(size, str):
+            return f"库存快照键名必须是字符串，得到 {type(size).__name__}"
+        if not isinstance(qty, (int, float)):
+            return f"尺码 {size} 的数量必须是数字，得到 {type(qty).__name__}"
+        if qty < 0:
+            return f"尺码 {size} 的数量不能为负数: {qty}"
+        if isinstance(qty, float) and not qty.is_integer():
+            return f"尺码 {size} 的数量必须是整数，得到 {qty}"
+    return None
+
+
+def _require_permission(caregiver: Caregiver, permission: str) -> Optional[Dict]:
+    if not _check_caregiver_permission(caregiver, permission):
+        role_name = CAREGIVER_ROLE_PERMISSIONS.get(caregiver.role, {}).get("name", caregiver.role)
+        return bad_request_response(f"{role_name}角色无此操作权限")
+    return None
+
+
 # ==================== 角色权限接口 ====================
 
 @router.get("/roles", summary="获取所有照护人角色及权限说明")
@@ -71,10 +104,22 @@ def get_caregiver_roles():
 # ==================== 照护人管理接口 ====================
 
 @router.post("/caregivers", summary="新增照护人")
-def create_caregiver(caregiver_data: CaregiverCreate, db: Session = Depends(get_db)):
+def create_caregiver(
+    caregiver_data: CaregiverCreate,
+    operator_caregiver_id: int = Query(..., description="操作人照护人ID"),
+    db: Session = Depends(get_db)
+):
     baby = _check_baby_exists(db, caregiver_data.baby_id)
     if not baby:
         return not_found_response("宝宝不存在")
+
+    operator = _check_caregiver_exists(db, operator_caregiver_id, caregiver_data.baby_id)
+    if not operator:
+        return not_found_response("操作人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(operator, "manage_caregivers")
+    if perm_error:
+        return perm_error
 
     try:
         db_caregiver = Caregiver(
@@ -138,11 +183,20 @@ def get_caregiver(caregiver_id: int, db: Session = Depends(get_db)):
 def update_caregiver(
     caregiver_id: int,
     caregiver_data: CaregiverUpdate,
+    operator_caregiver_id: int = Query(..., description="操作人照护人ID"),
     db: Session = Depends(get_db)
 ):
     caregiver = _check_caregiver_exists(db, caregiver_id)
     if not caregiver:
         return not_found_response("照护人不存在")
+
+    operator = _check_caregiver_exists(db, operator_caregiver_id, caregiver.baby_id)
+    if not operator:
+        return not_found_response("操作人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(operator, "manage_caregivers")
+    if perm_error:
+        return perm_error
 
     try:
         update_data = caregiver_data.model_dump(exclude_unset=True)
@@ -163,10 +217,22 @@ def update_caregiver(
 
 
 @router.delete("/caregivers/{caregiver_id}", summary="删除（停用）照护人")
-def delete_caregiver(caregiver_id: int, db: Session = Depends(get_db)):
+def delete_caregiver(
+    caregiver_id: int,
+    operator_caregiver_id: int = Query(..., description="操作人照护人ID"),
+    db: Session = Depends(get_db)
+):
     caregiver = _check_caregiver_exists(db, caregiver_id)
     if not caregiver:
         return not_found_response("照护人不存在")
+
+    operator = _check_caregiver_exists(db, operator_caregiver_id, caregiver.baby_id)
+    if not operator:
+        return not_found_response("操作人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(operator, "manage_caregivers")
+    if perm_error:
+        return perm_error
 
     try:
         caregiver.is_active = False
@@ -193,6 +259,14 @@ def create_shift(shift_data: ShiftCreate, db: Session = Depends(get_db)):
 
     if not caregiver.is_active:
         return bad_request_response("该照护人已停用，无法创建班次")
+
+    perm_error = _require_permission(caregiver, "create_shifts")
+    if perm_error:
+        return perm_error
+
+    inventory_error = _validate_inventory_snapshot(shift_data.inventory_snapshot)
+    if inventory_error:
+        return bad_request_response(inventory_error)
 
     shift_start = _parse_datetime(shift_data.shift_start)
     if not shift_start:
@@ -243,6 +317,16 @@ def end_shift(shift_id: int, end_data: ShiftEnd, db: Session = Depends(get_db)):
 
     if shift.status == "ended":
         return bad_request_response("该班次已结束")
+
+    caregiver = _check_caregiver_exists(db, shift.caregiver_id, shift.baby_id)
+    if caregiver:
+        perm_error = _require_permission(caregiver, "end_shifts")
+        if perm_error:
+            return perm_error
+
+    inventory_error = _validate_inventory_snapshot(end_data.inventory_snapshot)
+    if inventory_error:
+        return bad_request_response(inventory_error)
 
     shift_end = _parse_datetime(end_data.shift_end)
     if not shift_end:
@@ -432,6 +516,10 @@ def create_handover_item(item_data: HandoverItemCreate, db: Session = Depends(ge
     if not caregiver:
         return not_found_response("照护人不存在或不属于该宝宝")
 
+    perm_error = _require_permission(caregiver, "create_handover_items")
+    if perm_error:
+        return perm_error
+
     if shift.status == "ended":
         return bad_request_response("班次已结束，无法添加交接事项")
 
@@ -505,11 +593,20 @@ def get_handover_items(
 def update_handover_item(
     item_id: int,
     item_data: HandoverItemUpdate,
+    operator_caregiver_id: int = Query(..., description="操作人照护人ID"),
     db: Session = Depends(get_db)
 ):
     item = db.query(HandoverItem).filter(HandoverItem.id == item_id).first()
     if not item:
         return not_found_response("交接事项不存在")
+
+    operator = _check_caregiver_exists(db, operator_caregiver_id, item.baby_id)
+    if not operator:
+        return not_found_response("操作人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(operator, "create_handover_items")
+    if perm_error:
+        return perm_error
 
     try:
         update_data = item_data.model_dump(exclude_unset=True)
@@ -534,10 +631,22 @@ def update_handover_item(
 
 
 @router.put("/handover-items/{item_id}/resolve", summary="标记交接事项为已解决")
-def resolve_handover_item(item_id: int, db: Session = Depends(get_db)):
+def resolve_handover_item(
+    item_id: int,
+    operator_caregiver_id: int = Query(..., description="操作人照护人ID"),
+    db: Session = Depends(get_db)
+):
     item = db.query(HandoverItem).filter(HandoverItem.id == item_id).first()
     if not item:
         return not_found_response("交接事项不存在")
+
+    operator = _check_caregiver_exists(db, operator_caregiver_id, item.baby_id)
+    if not operator:
+        return not_found_response("操作人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(operator, "create_handover_items")
+    if perm_error:
+        return perm_error
 
     if item.is_resolved:
         return bad_request_response("该事项已解决")
@@ -572,6 +681,10 @@ def create_todo_task(task_data: TodoTaskCreate, db: Session = Depends(get_db)):
     caregiver = _check_caregiver_exists(db, task_data.caregiver_id, task_data.baby_id)
     if not caregiver:
         return not_found_response("照护人不存在或不属于该宝宝")
+
+    perm_error = _require_permission(caregiver, "manage_todo_tasks")
+    if perm_error:
+        return perm_error
 
     if shift.status == "ended":
         return bad_request_response("班次已结束，无法添加待办任务")
@@ -671,6 +784,10 @@ def complete_todo_task(
     if not completed_by:
         return not_found_response("完成人不存在或不属于该宝宝")
 
+    perm_error = _require_permission(completed_by, "manage_todo_tasks")
+    if perm_error:
+        return perm_error
+
     try:
         task.is_completed = True
         task.completed_at = datetime.utcnow()
@@ -711,11 +828,20 @@ def get_todo_task(task_id: int, db: Session = Depends(get_db)):
 def get_handover_summary(
     baby_id: int = Query(..., description="宝宝ID"),
     shift_id: Optional[int] = Query(default=None, description="指定班次ID"),
+    caregiver_id: Optional[int] = Query(default=None, description="照护人ID（用于权限校验）"),
     db: Session = Depends(get_db)
 ):
     baby = _check_baby_exists(db, baby_id)
     if not baby:
         return not_found_response("宝宝不存在")
+
+    if caregiver_id:
+        caregiver = _check_caregiver_exists(db, caregiver_id, baby_id)
+        if not caregiver:
+            return not_found_response("照护人不存在或不属于该宝宝")
+        perm_error = _require_permission(caregiver, "view_summary")
+        if perm_error:
+            return perm_error
 
     if shift_id:
         shift = _check_shift_exists(db, shift_id, baby_id)
@@ -741,11 +867,20 @@ def get_collaboration_risks(
     baby_id: int = Query(..., description="宝宝ID"),
     severity: Optional[str] = Query(default=None, description="风险级别 high/medium/low"),
     risk_type: Optional[str] = Query(default=None, description="风险类型"),
+    caregiver_id: Optional[int] = Query(default=None, description="照护人ID（用于权限校验）"),
     db: Session = Depends(get_db)
 ):
     baby = _check_baby_exists(db, baby_id)
     if not baby:
         return not_found_response("宝宝不存在")
+
+    if caregiver_id:
+        caregiver = _check_caregiver_exists(db, caregiver_id, baby_id)
+        if not caregiver:
+            return not_found_response("照护人不存在或不属于该宝宝")
+        perm_error = _require_permission(caregiver, "view_risks")
+        if perm_error:
+            return perm_error
 
     valid_severities = ["high", "medium", "low"]
     if severity and severity not in valid_severities:
@@ -833,11 +968,20 @@ def get_risk_types():
 def get_workload_statistics(
     baby_id: int = Query(..., description="宝宝ID"),
     days: int = Query(default=30, ge=1, le=365, description="统计天数"),
+    caregiver_id: Optional[int] = Query(default=None, description="操作人照护人ID（用于权限校验）"),
     db: Session = Depends(get_db)
 ):
     baby = _check_baby_exists(db, baby_id)
     if not baby:
         return not_found_response("宝宝不存在")
+
+    if caregiver_id:
+        operator = _check_caregiver_exists(db, caregiver_id, baby_id)
+        if not operator:
+            return not_found_response("操作人不存在或不属于该宝宝")
+        perm_error = _require_permission(operator, "view_statistics")
+        if perm_error:
+            return perm_error
 
     try:
         stats = WorkloadStatistics(db)
