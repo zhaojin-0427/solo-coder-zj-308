@@ -405,6 +405,22 @@ class GrowthPlanning:
         return default_pieces.get(size, 60)
 
     def _calculate_growth_rate(self, baby: Baby, plan: GrowthPlan) -> float:
+        if plan.target_weight_kg is not None and plan.target_date is not None:
+            from datetime import datetime
+            try:
+                target_date = datetime.strptime(plan.target_date, "%Y-%m-%d")
+                today = datetime.now()
+                days_diff = (target_date - today).days
+                if days_diff > 0 and plan.target_weight_kg > baby.current_weight_kg:
+                    weight_gain = plan.target_weight_kg - baby.current_weight_kg
+                    months_diff = days_diff / 30.0
+                    if months_diff > 0:
+                        target_rate = weight_gain / months_diff
+                        if target_rate > 0:
+                            return target_rate
+            except (ValueError, TypeError):
+                pass
+
         if plan.growth_rate_kg_per_month is not None and plan.growth_rate_kg_per_month > 0:
             return plan.growth_rate_kg_per_month
         return self.predictor._get_monthly_growth_rate(baby.current_age_months)

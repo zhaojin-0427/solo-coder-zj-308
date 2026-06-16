@@ -8,13 +8,22 @@ from ..models import Baby, GrowthPlan, PackageSpec
 from ..schemas import (
     GrowthPlanCreate, GrowthPlanUpdate, GrowthPlanResponse,
     PackageSpecCreate, PackageSpecUpdate, PackageSpecResponse,
-    validate_diaper_size
+    validate_diaper_size, validate_planning_period, VALID_PLANNING_PERIODS
 )
 from ..utils import success_response, not_found_response, bad_request_response
 from ..prediction import GrowthPlanning
 from ..alerts import PlanReminderSystem
 
 router = APIRouter(prefix="/api/planning", tags=["成长计划与补货规划"])
+
+
+def _validate_planning_period(planning_period_days: Optional[int]) -> int:
+    if planning_period_days is None:
+        return 30
+    try:
+        return validate_planning_period(planning_period_days)
+    except ValueError as e:
+        raise ValueError(str(e))
 
 
 @router.post("/growth-plan", summary="创建成长计划配置")
@@ -228,8 +237,10 @@ def get_replenishment_plan(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     planner = GrowthPlanning(db)
     plan = planner.get_comprehensive_planning(baby, planning_period_days=planning_period_days)
@@ -257,8 +268,10 @@ def get_size_transition_calendar(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     planner = GrowthPlanning(db)
     transition_windows = planner.calculate_size_transition_windows(baby, planning_period_days=planning_period_days)
@@ -323,8 +336,10 @@ def get_overstock_risk_assessment(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     planner = GrowthPlanning(db)
     risk_items = planner.assess_overstock_risk(baby, planning_period_days=planning_period_days)
@@ -386,8 +401,10 @@ def get_plan_reminders(
     if days is None or days <= 0 or days > 365:
         return bad_request_response("查询天数必须在 1-365 天之间")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     reminder_system = PlanReminderSystem(db)
     stored_reminders = reminder_system.get_plan_reminders(baby_id, resolved=resolved, days=days)
@@ -417,8 +434,10 @@ def check_and_create_reminders(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     reminder_system = PlanReminderSystem(db)
     new_reminders = reminder_system.check_and_create_plan_reminders(baby, planning_period_days=planning_period_days)
@@ -470,8 +489,10 @@ def get_purchase_priority(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     planner = GrowthPlanning(db)
     priorities = planner.calculate_purchase_priority(baby, planning_period_days=planning_period_days)
@@ -499,8 +520,10 @@ def get_comprehensive_planning_report(
     if not baby:
         return not_found_response("宝宝不存在")
 
-    if planning_period_days is None or planning_period_days <= 0 or planning_period_days > 365:
-        return bad_request_response("计划周期天数必须在 1-365 天之间")
+    try:
+        planning_period_days = _validate_planning_period(planning_period_days)
+    except ValueError as e:
+        return bad_request_response(str(e))
 
     planner = GrowthPlanning(db)
     plan = planner.get_comprehensive_planning(baby, planning_period_days=planning_period_days)

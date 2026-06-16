@@ -264,7 +264,7 @@ class PlanningQueryParams(BaseModel):
     @field_validator("planning_period_days")
     @classmethod
     def check_period(cls, v: int) -> int:
-        return v
+        return validate_planning_period(v)
 
 
 class SizeTransitionWindow(BaseModel):
