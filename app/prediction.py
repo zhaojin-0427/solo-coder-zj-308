@@ -176,7 +176,7 @@ class DiaperPrediction:
             return {
                 "current_inventory": latest_inventory.quantity,
                 "daily_usage": 0,
-                "available_days": float('inf'),
+                "available_days": 999,
                 "status": "unknown"
             }
 
@@ -275,7 +275,7 @@ class DiaperPrediction:
         total_predicted = sum(p["predicted_usage"] for p in daily_predictions)
 
         run_out_date = None
-        if inventory_status["available_days"] != float('inf') and inventory_status["available_days"] > 0:
+        if inventory_status["available_days"] != 999 and inventory_status["available_days"] > 0:
             run_out_date = (datetime.now() + timedelta(days=inventory_status["available_days"])).strftime("%Y-%m-%d")
 
         return {
@@ -332,7 +332,7 @@ class DiaperPrediction:
             shortage = max(0, needed_qty - current_qty)
 
             if size == baby.current_diaper_size:
-                priority_score = (safety_days - inventory["available_days"]) if inventory["available_days"] != float('inf') else -10
+                priority_score = (safety_days - inventory["available_days"]) if inventory["available_days"] != 999 else -10
                 if inventory["available_days"] < 3:
                     priority = "critical"
                 elif inventory["available_days"] < 7:
@@ -836,11 +836,16 @@ class GrowthPlanning:
             is_next = i > current_idx
             is_prev = i < current_idx
 
+            safety_stock_days = plan.safety_stock_days or 7
+
             if is_current:
                 usage_rate = usage["average_daily"] if usage["average_daily"] > 0 else 6
                 days_until_change = size_change_info.get("days_remaining", 90)
                 expected_usage_days = min(planning_period_days, days_until_change)
                 expected_usage = usage_rate * expected_usage_days
+                stock_coverage_days = current_stock / usage_rate if usage_rate > 0 else 0
+                if stock_coverage_days < safety_stock_days:
+                    continue
             elif is_next:
                 usage_rate = usage["average_daily"] if usage["average_daily"] > 0 else 5
                 days_to_start = self._estimate_days_to_weight(baby,

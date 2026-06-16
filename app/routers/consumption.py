@@ -64,6 +64,9 @@ def get_baby_consumption(
 ):
     from datetime import datetime, timedelta
 
+    if days is not None and days <= 0:
+        return bad_request_response("查询天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")

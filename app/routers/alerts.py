@@ -49,6 +49,9 @@ def get_baby_alerts(
     days: Optional[int] = 30,
     db: Session = Depends(get_db)
 ):
+    if days is not None and days <= 0:
+        return bad_request_response("查询天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")
@@ -93,6 +96,9 @@ def get_leak_analysis(
     days: Optional[int] = 14,
     db: Session = Depends(get_db)
 ):
+    if days is not None and days <= 0:
+        return bad_request_response("查询天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")
@@ -161,6 +167,9 @@ def get_alert_statistics(
     days: Optional[int] = 30,
     db: Session = Depends(get_db)
 ):
+    if days is not None and days <= 0:
+        return bad_request_response("查询天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")

@@ -25,6 +25,11 @@ class BabyCreate(BaseModel):
     current_diaper_size: str = Field(..., description="当前纸尿裤尺码 NB/S/M/L/XL/XXL")
     gender: Optional[str] = Field(default=None, description="性别")
 
+    @field_validator("birth_date")
+    @classmethod
+    def check_birth_date(cls, v: str) -> str:
+        return validate_date_format(v)
+
     @field_validator("current_diaper_size")
     @classmethod
     def check_diaper_size(cls, v: str) -> str:
@@ -38,6 +43,13 @@ class BabyUpdate(BaseModel):
     current_weight_kg: Optional[float] = Field(default=None, gt=0)
     current_diaper_size: Optional[str] = None
     gender: Optional[str] = None
+
+    @field_validator("birth_date")
+    @classmethod
+    def check_birth_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return validate_date_format(v)
+        return v
 
     @field_validator("current_diaper_size")
     @classmethod
@@ -70,6 +82,11 @@ class ConsumptionRecordCreate(BaseModel):
     weight_kg: Optional[float] = Field(default=None, gt=0, description="当日体重")
     notes: Optional[str] = Field(default=None, description="备注")
 
+    @field_validator("record_date")
+    @classmethod
+    def check_record_date(cls, v: str) -> str:
+        return validate_date_format(v)
+
     @field_validator("diaper_size")
     @classmethod
     def check_diaper_size(cls, v: str) -> str:
@@ -83,6 +100,11 @@ class InventoryRecordCreate(BaseModel):
     quantity: int = Field(..., ge=0, description="库存数量")
     unit: Optional[str] = Field(default="pieces", description="单位")
     notes: Optional[str] = Field(default=None, description="备注")
+
+    @field_validator("record_date")
+    @classmethod
+    def check_record_date(cls, v: str) -> str:
+        return validate_date_format(v)
 
     @field_validator("diaper_size")
     @classmethod

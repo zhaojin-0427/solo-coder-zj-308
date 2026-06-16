@@ -363,7 +363,7 @@ class AlertSystem:
             monthly_gain = 0.2
 
         daily_gain = monthly_gain / 30
-        estimated_days = weight_gap / daily_gain if daily_gain > 0 else float('inf')
+        estimated_days = weight_gap / daily_gain if daily_gain > 0 else 999
 
         return min(int(estimated_days), 180)
 
@@ -625,6 +625,12 @@ class PlanReminderSystem:
         overstock_risks = planner.assess_overstock_risk(baby, planning_period_days)
         for risk in overstock_risks:
             if risk["size_status"] == "current" and risk["risk_level"] in ["high", "medium"]:
+                from .prediction import DiaperPrediction
+                predictor = DiaperPrediction(self.db)
+                inv = predictor.calculate_inventory_days(baby.id, risk["size"])
+                safety_days = plan.safety_stock_days or 7
+                if inv["available_days"] != 999 and inv["available_days"] < safety_days:
+                    continue
                 reminders.append({
                     "reminder_type": "overstock_warning",
                     "reminder_level": risk["risk_level"],
@@ -715,7 +721,7 @@ class PlanReminderSystem:
         inventory = predictor.calculate_inventory_days(baby.id, baby.current_diaper_size)
         safety_days = plan.safety_stock_days or 7
 
-        if inventory["available_days"] != float('inf') and inventory["available_days"] < safety_days:
+        if inventory["available_days"] != 999 and inventory["available_days"] < safety_days:
             reminders.append({
                 "reminder_type": "safety_stock_warning",
                 "reminder_level": "high" if inventory["available_days"] < 3 else "medium",

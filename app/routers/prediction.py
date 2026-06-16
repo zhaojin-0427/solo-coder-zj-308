@@ -4,7 +4,7 @@ from typing import Optional
 
 from ..database import get_db
 from ..models import Baby
-from ..utils import success_response, not_found_response
+from ..utils import success_response, not_found_response, bad_request_response
 from ..prediction import DiaperPrediction
 
 router = APIRouter(prefix="/api/prediction", tags=["消耗预测"])
@@ -16,6 +16,9 @@ def get_consumption_prediction(
     days: Optional[int] = 30,
     db: Session = Depends(get_db)
 ):
+    if days is not None and days <= 0:
+        return bad_request_response("预测天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")
@@ -61,6 +64,9 @@ def get_restocking_list(
     safety_days: Optional[int] = 7,
     db: Session = Depends(get_db)
 ):
+    if safety_days is not None and safety_days <= 0:
+        return bad_request_response("安全库存天数必须为正整数")
+
     baby = db.query(Baby).filter(Baby.id == baby_id).first()
     if not baby:
         return not_found_response("宝宝不存在")
